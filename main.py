@@ -1,8 +1,8 @@
 from flask import Flask, jsonify, request
 import sqlite3
-
+from flask_cors import CORS
 app = Flask(__name__)
-
+CORS(app)
 
 ##########################   пользователь   ###################################
 
@@ -68,7 +68,7 @@ def create_new_user():
     login = data.get('login')
     name = data.get('name')
     password = data.get('password')
-    role = data.get('role')
+    role = "user"
 
     if not login or not name or not password or not role:
         return jsonify({"error": "Missing required fields"}), 400
