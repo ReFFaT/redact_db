@@ -279,12 +279,18 @@ def get_user_tables_and_data(user_login):
     # Получаем содержимое каждой таблицы
     tables_and_data = {}
     for user_table in user_tables:
-        # Получаем список полей
-        a = c.execute(f"PRAGMA table_info({user_table})")
-        table_fields = [row[1] for row in c.fetchall()]
+        # Получаем список полей и их типов
+        c.execute(f"PRAGMA table_info({user_table})")
+        table_fields = []
+        for row in c.fetchall():
+            column_name = row[1]
+            column_type = row[2] if row[2] else "UNKNOWN"
+            table_fields.append(f"{column_name}_{column_type}")
+
         # Получаем данные из таблицы
         c.execute(f"SELECT * FROM {user_table}")
-        table_rows = [dict(zip(table_fields, row)) for row in c.fetchall()]
+        table_rows = [dict(zip([field.split()[0] for field in table_fields], row)) for row in c.fetchall()]
+        
         tables_and_data[user_table] = {
             "fields": table_fields,
             "data": table_rows
@@ -327,7 +333,40 @@ def delete_table(user_login, table_name):
 
 # изменение колонок и работа с данными таблицы ########################################
 
-# Функция для добавления колонок в таблицу по пользователю
+# # Функция для добавления колонок в таблицу по пользователю
+# def add_columns_to_table(user_login, table_name, columns):
+#     conn = sqlite3.connect('custom.db')
+#     c = conn.cursor()
+
+#     # Получаем текущие колонки таблицы
+#     c.execute(f"PRAGMA table_info({table_name})")
+#     existing_columns = [row[1] for row in c.fetchall()]
+
+#     # Определяем новые колонки, которые еще не существуют
+#     new_columns = [column for column in columns if column not in existing_columns]
+
+#     if not new_columns:
+#         conn.close()
+#         return {"message": "No new columns to add."}
+
+#     # Добавляем новые колонки в таблицу
+#     for column in new_columns:
+#         c.execute(f"ALTER TABLE {table_name} ADD COLUMN {column}")
+#     conn.commit()
+
+#     conn.close()
+#     return {"message": f"New columns {', '.join(new_columns)} have been added to table '{table_name}'."}
+
+# # Маршрут для добавления колонок в таблицу по пользователю
+# @app.route('/add_columns/<string:user_login>/<string:table_name>', methods=['POST'])
+# def add_columns(user_login, table_name):
+#     data = request.get_json()
+#     columns = data.get('columns', [])
+
+#     result = add_columns_to_table(user_login, table_name, columns)
+#     return jsonify(result), 200
+
+
 def add_columns_to_table(user_login, table_name, columns):
     conn = sqlite3.connect('custom.db')
     c = conn.cursor()
@@ -337,7 +376,7 @@ def add_columns_to_table(user_login, table_name, columns):
     existing_columns = [row[1] for row in c.fetchall()]
 
     # Определяем новые колонки, которые еще не существуют
-    new_columns = [column for column in columns if column not in existing_columns]
+    new_columns = [column for column in columns if column['col'] not in existing_columns]
 
     if not new_columns:
         conn.close()
@@ -345,11 +384,16 @@ def add_columns_to_table(user_login, table_name, columns):
 
     # Добавляем новые колонки в таблицу
     for column in new_columns:
-        c.execute(f"ALTER TABLE {table_name} ADD COLUMN {column}")
+        col_name = column['col']
+        col_type = column['type']  # Если тип не указан, то будет пустая строка
+        if col_type:
+            c.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}")
+        else:
+            c.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name}")
     conn.commit()
 
     conn.close()
-    return {"message": f"New columns {', '.join(new_columns)} have been added to table '{table_name}'."}
+    return {"message": f"New columns {', '.join([col['col'] for col in new_columns])} have been added to table '{table_name}'."}
 
 # Маршрут для добавления колонок в таблицу по пользователю
 @app.route('/add_columns/<string:user_login>/<string:table_name>', methods=['POST'])
@@ -359,6 +403,25 @@ def add_columns(user_login, table_name):
 
     result = add_columns_to_table(user_login, table_name, columns)
     return jsonify(result), 200
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
