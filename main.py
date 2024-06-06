@@ -1,6 +1,9 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 import sqlite3
 from flask_cors import CORS
+import pandas as pd
+import os
+import tempfile
 app = Flask(__name__)
 CORS(app)
 
@@ -289,7 +292,7 @@ def get_user_tables_and_data(user_login):
 
         # Получаем данные из таблицы
         c.execute(f"SELECT * FROM {user_table}")
-        table_rows = [dict(zip([field.split()[0] for field in table_fields], row)) for row in c.fetchall()]
+        table_rows = [dict(zip([field.split('_')[0] for field in table_fields], row)) for row in c.fetchall()]
         
         tables_and_data[user_table] = {
             "fields": table_fields,
@@ -535,5 +538,121 @@ def delete_data(user_login, table_name, id):
     return jsonify(result), 200
 
 
+
+# Функция для подключения к базе данных
+def get_db_connection():
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Маршрут для поиска в таблице по указанному столбцу и значению
+@app.route('/search-table/<table_name>', methods=['GET'])
+def search_table(table_name):
+    column = request.args.get('column')
+    value = request.args.get('value')
+    
+    if not column or not value:
+        return "Пожалуйста, укажите столбец и значение для поиска.", 400
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        query = f"SELECT * FROM {table_name} WHERE {column} = ?"
+        cursor.execute(query, (value,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if rows:
+            results = [dict(row) for row in rows]
+            return jsonify(results)
+        else:
+            return ""
+    except sqlite3.OperationalError as e:
+        return str(e), 400
+
+
+
+def query_db(query, args=(), one=False):
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, args)
+    rv = cur.fetchall()
+    conn.close()
+    return (rv[0] if rv else None) if one else rv
+
+@app.route('/filter', methods=['POST'])
+def filter_data():
+    data = request.json
+    table_name = data.get('table')
+    filters = data.get('filters', [])
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    query = f"SELECT * FROM {table_name} WHERE 1=1"
+    params = []
+
+    for f in filters:
+        column = f.get('column')
+        from_val = f.get('from')
+        to_val = f.get('to')
+        value = f.get('value')
+
+        if 'from' in f or 'to' in f:
+            if from_val is not None and from_val != "":
+                query += f" AND {column} >= ?"
+                params.append(from_val)
+            if to_val is not None and to_val != "":
+                query += f" AND {column} <= ?"
+                params.append(to_val)
+        elif 'value' in f:
+            if value is not None and value != "":
+                query += f" AND {column} = ?"
+                params.append(value)
+
+    results = query_db(query, params)
+    return jsonify([dict(row) for row in results])
+
+
+
+
+def query_db(query, args=(), one=False):
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, args)
+    rv = cur.fetchall()
+    conn.close()
+    return (rv[0] if rv else None) if one else rv
+
+@app.route('/export', methods=['POST'])
+def export_table():
+    data = request.json
+    table_name = data.get('table')
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    # Query to get all data from the specified table
+    query = f"SELECT * FROM {table_name}"
+    conn = sqlite3.connect('custom.db')
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    # Save DataFrame to a temporary Excel file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        df.to_excel(tmp.name, index=False)
+        tmp_path = tmp.name
+
+    # Send the temporary file and ensure it's deleted after sending
+    response = send_file(tmp_path, as_attachment=True)
+    response.call_on_close(lambda: os.remove(tmp_path))
+
+    return response
+
+
+
 if __name__ == '__main__':
     app.run(debug=True)
+
