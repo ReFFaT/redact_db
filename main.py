@@ -1,6 +1,9 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 import sqlite3
 from flask_cors import CORS
+import pandas as pd
+import os
+import tempfile
 app = Flask(__name__)
 CORS(app)
 
@@ -279,12 +282,18 @@ def get_user_tables_and_data(user_login):
     # Получаем содержимое каждой таблицы
     tables_and_data = {}
     for user_table in user_tables:
-        # Получаем список полей
-        a = c.execute(f"PRAGMA table_info({user_table})")
-        table_fields = [row[1] for row in c.fetchall()]
+        # Получаем список полей и их типов
+        c.execute(f"PRAGMA table_info({user_table})")
+        table_fields = []
+        for row in c.fetchall():
+            column_name = row[1]
+            column_type = row[2] if row[2] else "UNKNOWN"
+            table_fields.append(f"{column_name}_{column_type}")
+
         # Получаем данные из таблицы
         c.execute(f"SELECT * FROM {user_table}")
-        table_rows = [dict(zip(table_fields, row)) for row in c.fetchall()]
+        table_rows = [dict(zip([field.split('_')[0] for field in table_fields], row)) for row in c.fetchall()]
+        
         tables_and_data[user_table] = {
             "fields": table_fields,
             "data": table_rows
@@ -327,7 +336,40 @@ def delete_table(user_login, table_name):
 
 # изменение колонок и работа с данными таблицы ########################################
 
-# Функция для добавления колонок в таблицу по пользователю
+# # Функция для добавления колонок в таблицу по пользователю
+# def add_columns_to_table(user_login, table_name, columns):
+#     conn = sqlite3.connect('custom.db')
+#     c = conn.cursor()
+
+#     # Получаем текущие колонки таблицы
+#     c.execute(f"PRAGMA table_info({table_name})")
+#     existing_columns = [row[1] for row in c.fetchall()]
+
+#     # Определяем новые колонки, которые еще не существуют
+#     new_columns = [column for column in columns if column not in existing_columns]
+
+#     if not new_columns:
+#         conn.close()
+#         return {"message": "No new columns to add."}
+
+#     # Добавляем новые колонки в таблицу
+#     for column in new_columns:
+#         c.execute(f"ALTER TABLE {table_name} ADD COLUMN {column}")
+#     conn.commit()
+
+#     conn.close()
+#     return {"message": f"New columns {', '.join(new_columns)} have been added to table '{table_name}'."}
+
+# # Маршрут для добавления колонок в таблицу по пользователю
+# @app.route('/add_columns/<string:user_login>/<string:table_name>', methods=['POST'])
+# def add_columns(user_login, table_name):
+#     data = request.get_json()
+#     columns = data.get('columns', [])
+
+#     result = add_columns_to_table(user_login, table_name, columns)
+#     return jsonify(result), 200
+
+
 def add_columns_to_table(user_login, table_name, columns):
     conn = sqlite3.connect('custom.db')
     c = conn.cursor()
@@ -337,7 +379,7 @@ def add_columns_to_table(user_login, table_name, columns):
     existing_columns = [row[1] for row in c.fetchall()]
 
     # Определяем новые колонки, которые еще не существуют
-    new_columns = [column for column in columns if column not in existing_columns]
+    new_columns = [column for column in columns if column['col'] not in existing_columns]
 
     if not new_columns:
         conn.close()
@@ -345,11 +387,16 @@ def add_columns_to_table(user_login, table_name, columns):
 
     # Добавляем новые колонки в таблицу
     for column in new_columns:
-        c.execute(f"ALTER TABLE {table_name} ADD COLUMN {column}")
+        col_name = column['col']
+        col_type = column['type']  # Если тип не указан, то будет пустая строка
+        if col_type:
+            c.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}")
+        else:
+            c.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name}")
     conn.commit()
 
     conn.close()
-    return {"message": f"New columns {', '.join(new_columns)} have been added to table '{table_name}'."}
+    return {"message": f"New columns {', '.join([col['col'] for col in new_columns])} have been added to table '{table_name}'."}
 
 # Маршрут для добавления колонок в таблицу по пользователю
 @app.route('/add_columns/<string:user_login>/<string:table_name>', methods=['POST'])
@@ -359,6 +406,25 @@ def add_columns(user_login, table_name):
 
     result = add_columns_to_table(user_login, table_name, columns)
     return jsonify(result), 200
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -472,5 +538,121 @@ def delete_data(user_login, table_name, id):
     return jsonify(result), 200
 
 
+
+# Функция для подключения к базе данных
+def get_db_connection():
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# Маршрут для поиска в таблице по указанному столбцу и значению
+@app.route('/search-table/<table_name>', methods=['GET'])
+def search_table(table_name):
+    column = request.args.get('column')
+    value = request.args.get('value')
+    
+    if not column or not value:
+        return "Пожалуйста, укажите столбец и значение для поиска.", 400
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        query = f"SELECT * FROM {table_name} WHERE {column} = ?"
+        cursor.execute(query, (value,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if rows:
+            results = [dict(row) for row in rows]
+            return jsonify(results)
+        else:
+            return ""
+    except sqlite3.OperationalError as e:
+        return str(e), 400
+
+
+
+def query_db(query, args=(), one=False):
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, args)
+    rv = cur.fetchall()
+    conn.close()
+    return (rv[0] if rv else None) if one else rv
+
+@app.route('/filter', methods=['POST'])
+def filter_data():
+    data = request.json
+    table_name = data.get('table')
+    filters = data.get('filters', [])
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    query = f"SELECT * FROM {table_name} WHERE 1=1"
+    params = []
+
+    for f in filters:
+        column = f.get('column')
+        from_val = f.get('from')
+        to_val = f.get('to')
+        value = f.get('value')
+
+        if 'from' in f or 'to' in f:
+            if from_val is not None and from_val != "":
+                query += f" AND {column} >= ?"
+                params.append(from_val)
+            if to_val is not None and to_val != "":
+                query += f" AND {column} <= ?"
+                params.append(to_val)
+        elif 'value' in f:
+            if value is not None and value != "":
+                query += f" AND {column} = ?"
+                params.append(value)
+
+    results = query_db(query, params)
+    return jsonify([dict(row) for row in results])
+
+
+
+
+def query_db(query, args=(), one=False):
+    conn = sqlite3.connect('custom.db')
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute(query, args)
+    rv = cur.fetchall()
+    conn.close()
+    return (rv[0] if rv else None) if one else rv
+
+@app.route('/export', methods=['POST'])
+def export_table():
+    data = request.json
+    table_name = data.get('table')
+
+    if not table_name:
+        return jsonify({"error": "Table name is required"}), 400
+
+    # Query to get all data from the specified table
+    query = f"SELECT * FROM {table_name}"
+    conn = sqlite3.connect('custom.db')
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    # Save DataFrame to a temporary Excel file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+        df.to_excel(tmp.name, index=False)
+        tmp_path = tmp.name
+
+    # Send the temporary file and ensure it's deleted after sending
+    response = send_file(tmp_path, as_attachment=True)
+    response.call_on_close(lambda: os.remove(tmp_path))
+
+    return response
+
+
+
 if __name__ == '__main__':
     app.run(debug=True)
+

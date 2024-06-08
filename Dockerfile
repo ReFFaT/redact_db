@@ -8,7 +8,10 @@ WORKDIR /app
 RUN pip install \
     Flask \
     Flask-SQLAlchemy \
-    Flask-Cors
+    Flask-Cors \
+    pandas \ 
+    openpyxl \
+    temp
 
 # Копируем исходный код приложения в контейнер
 COPY . .
