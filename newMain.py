@@ -186,7 +186,7 @@ def create_new_user_table():
     # Добавляем запись в таблицу user_tables
     c.execute("INSERT INTO user_tables (tables, description) VALUES (?, ?)", (table_name, table_description))
     conn.commit()
-
+    conn.close()
     # Возвращаем информацию о созданной таблице
     return jsonify({
         "user": user_login,
@@ -607,6 +607,152 @@ def filter_data():
     return jsonify([dict(row) for row in results])
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Функция для добавления базы данных пользователю
+def add_user_db(login, db_name):
+    user_db_name = f"{login}_{db_name}.db"
+
+    # Обновляем db_list в основной базе данных
+    conn = sqlite3.connect("all_users.db")
+    c = conn.cursor()
+    c.execute('SELECT db_list FROM users WHERE login = ?', (login,))
+    result = c.fetchone()
+    if result:
+        db_list = result[0].split(',') if result[0] else []
+        db_list.append(user_db_name)
+        c.execute('UPDATE users SET db_list = ? WHERE login = ?', (','.join(db_list), login))
+        conn.commit()
+        conn.close()
+    else:
+        return None  # Если пользователь не найден
+
+    # Создаем новую базу данных и таблицу user_tables
+    new_conn = sqlite3.connect(user_db_name)
+    
+    new_c = new_conn.cursor()
+    new_c.execute('''CREATE TABLE IF NOT EXISTS user_tables (
+                        tables TEXT,
+                        description TEXT)''')
+    
+    new_conn.commit()
+    new_conn.close()
+    
+    return user_db_name
+
+@app.route('/create_db', methods=['POST'])
+def create_db():
+    data = request.get_json()
+    login = data.get('login')
+    db_name = data.get('db_name')
+
+    if not login or not db_name:
+        return jsonify({"error": "неверный логин или название бд"}), 400
+
+    user_db_name = add_user_db(login, db_name)
+    if user_db_name:
+        return jsonify({"message": "Бд создана"}), 201
+    else:
+        return jsonify({"error": "Нет пользователя"}), 404
+
+
+
+
+
+# Маршрут для удаления базы данных и записи из таблицы по логину и названию базы данных
+@app.route('/delete_db/<string:user_login>/<string:db_name>', methods=['DELETE'])
+def delete_db(user_login, db_name):
+    try:
+        db_file = f"{db_name}.db"
+        # Удаление базы данных
+        if os.path.exists(db_file):
+            os.remove(db_file)
+        else:
+            return jsonify({"error": f"Что то не так"}), 404
+
+        # Получение списка баз данных, принадлежащих пользователю
+        conn = sqlite3.connect("all_users.db")
+        c = conn.cursor()
+
+        c.execute("SELECT db_list FROM users WHERE login = ?", (user_login,))
+
+        db_list_result = c.fetchone()
+        if not db_list_result:
+            return jsonify({"error": "User not found"}), 404
+
+        db_list = db_list_result[0]
+
+        # Удаление указанной базы данных из списка
+        updated_db_list = ','.join([db for db in db_list.split(',') if db != db_file])
+
+        # Обновление записи в таблице users
+        c.execute("UPDATE users SET db_list = ? WHERE login = ?", (updated_db_list, user_login))
+        
+        conn.commit()
+        conn.close()
+
+        return jsonify({"message": "Удалено"}), 200
+
+    except sqlite3.OperationalError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+# # Маршрут для поиска пользователя по логину
+# @app.route('/user/<string:login>', methods=['GET'])
+# def get_user(login):
+#     try:
+#         # Открываем соединение с базой данных
+#         conn = sqlite3.connect('all_users.db')
+#         c = conn.cursor()
+        
+#         # Выполняем запрос для поиска пользователя по логину
+#         c.execute("SELECT * FROM users WHERE login = ?", (login,))
+#         user = c.fetchone()
+        
+#         # Закрываем соединение с базой данных
+#         conn.close()
+        
+#         if user:
+#             return jsonify({
+#                 "login": user[1], 
+#                 "name": user[2], 
+#                 "role": user[3], 
+#                 "db_list": user[4]
+#             }), 200
+#         else:
+#             return jsonify({"error": "User not found"}), 404
+    
+#     except sqlite3.OperationalError as e:
+#         return jsonify({"error": str(e)}), 400
+
+
+
+
+# Маршрут для скачивания файла
+@app.route('/download/<string:db_name>', methods=['GET'])
+def download_file(db_name):
+    try:
+        # Формируем путь к файлу
+        path = f"{db_name}.db"
+        
+        # Скачиваем файл
+        return send_file(path, as_attachment=True)
+    
+    except FileNotFoundError:
+        return jsonify({"error": "File not found"}), 404
 
 
 if __name__ == '__main__':
